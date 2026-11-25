@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+# Resolve symlinks portably across macOS and Linux
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  case "$TARGET" in
+    /*) SOURCE="$TARGET" ;;
+    *) SOURCE="$DIR/$TARGET" ;;
+  esac
+done
+BIN_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+REPO_ROOT="$(cd -P "$BIN_DIR/.." && pwd)"
+
+# Prefer Python 3.11+ from user local bin, Homebrew, or system PATH
+for candidate in "$HOME/.local/bin/python3" "/opt/homebrew/bin/python3" "/usr/local/bin/python3" "python3"; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PY_BIN="$candidate"
+    break
+  fi
+done
+
+PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec "$PY_BIN" -B -m deep_survey.survey "$@"
