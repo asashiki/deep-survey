@@ -215,7 +215,7 @@ def make_handler(expected_token: str | None):
                     channels=channels,
                     include_oai_api=bool(body.get("include_oai_api", False)),
                     out_report=None,
-                    timeout_per_channel=int(body.get("timeout", 210)),
+                    timeout_per_channel=int(body["timeout"]) if body.get("timeout") is not None else None,
                 )
                 state = wait_for_run(run_dir, wait_sec)
                 resp = dict(state)

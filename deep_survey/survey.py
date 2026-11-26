@@ -68,6 +68,9 @@ CACHE_ROOT = Path(os.environ.get("DEEP_SURVEY_CACHE_DIR") or (HOME / ".cache/dee
 RUNS_DIR = CACHE_ROOT / "runs"
 EMPTY_CWD = CACHE_ROOT / "empty-workspace"
 
+DEFAULT_CHANNEL_TIMEOUT = 210
+CODEX_TIMEOUT_BY_DEPTH = {"fast": 600, "deep": 1200}
+
 ALL_DEFAULT_CHANNELS = ("codex", "grok", "agy", "github", "hn")
 URL_RE = re.compile(r"https?://[^\s)\]\"'>]+")
 REPO_SLUG_RE = re.compile(r"github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)")
@@ -217,7 +220,9 @@ def classify_cli_failure(raw_err: str, returncode: int) -> tuple[str, str]:
 # Channel 1: Codex Personal Subscription (Official Responses web_search)
 # ---------------------------------------------------------------------------
 
-def run_codex_channel(query: str, *, depth: str, focus_hint: str = "", timeout: int = 210) -> dict:
+def run_codex_channel(query: str, *, depth: str, focus_hint: str = "", timeout: int | None = None) -> dict:
+    if timeout is None:
+        timeout = CODEX_TIMEOUT_BY_DEPTH[depth]
     started = time.monotonic()
     if not Path(CODEX_BIN).exists():
         return {"channel": "codex", "status": "unavailable", "error": f"未找到 codex: {CODEX_BIN}"}
@@ -332,7 +337,7 @@ def run_codex_channel(query: str, *, depth: str, focus_hint: str = "", timeout: 
 # Channel 2: Grok Subscription (Native x_search + auto-failover to xai_api)
 # ---------------------------------------------------------------------------
 
-def run_grok_channel(query: str, *, depth: str, focus_hint: str = "", timeout: int = 210) -> dict:
+def run_grok_channel(query: str, *, depth: str, focus_hint: str = "", timeout: int = DEFAULT_CHANNEL_TIMEOUT) -> dict:
     started = time.monotonic()
     if not Path(GROK_BIN).exists():
         if get_connector_key("xai_api"):
@@ -435,7 +440,7 @@ def run_grok_channel(query: str, *, depth: str, focus_hint: str = "", timeout: i
 # Channel 3: Antigravity / Google Subscription (auto-failover to gemini_api)
 # ---------------------------------------------------------------------------
 
-def run_agy_channel(query: str, *, depth: str, focus_hint: str = "", timeout: int = 210) -> dict:
+def run_agy_channel(query: str, *, depth: str, focus_hint: str = "", timeout: int = DEFAULT_CHANNEL_TIMEOUT) -> dict:
     started = time.monotonic()
     if not Path(AGY_BIN).exists():
         if get_connector_key("gemini_api"):
@@ -1123,7 +1128,7 @@ def execute_survey_run(
     channels: list[str],
     include_oai_api: bool = False,
     out_report: Path | None = None,
-    timeout_per_channel: int = 210,
+    timeout_per_channel: int | None = None,
 ) -> dict:
     if os.environ.get("DEEP_SURVEY_ACTIVE") == "1" and os.environ.get("DEEP_SURVEY_WORKER") != "1":
         raise SurveyError("检测到递归调用 (DEEP_SURVEY_ACTIVE=1)，已阻止子代理套娃执行 deep-survey。")
@@ -1160,18 +1165,19 @@ def execute_survey_run(
     def _run_one(ch: str) -> tuple[str, dict]:
         if ch == "codex":
             return ch, run_codex_channel(query, depth=depth, timeout=timeout_per_channel)
+        timeout = DEFAULT_CHANNEL_TIMEOUT if timeout_per_channel is None else timeout_per_channel
         if ch == "grok":
-            return ch, run_grok_channel(query, depth=depth, timeout=timeout_per_channel)
+            return ch, run_grok_channel(query, depth=depth, timeout=timeout)
         if ch == "agy":
-            return ch, run_agy_channel(query, depth=depth, timeout=timeout_per_channel)
+            return ch, run_agy_channel(query, depth=depth, timeout=timeout)
         if ch == "github":
-            return ch, run_github_channel(query, depth=depth, prebuilt_queries=shared_en_queries, timeout=min(90, timeout_per_channel))
+            return ch, run_github_channel(query, depth=depth, prebuilt_queries=shared_en_queries, timeout=min(90, timeout))
         if ch == "hn":
             return ch, run_hn_channel(shared_en_queries or [query[:60]], depth=depth, timeout=30)
         if ch == "oai_api":
-            return ch, run_oai_api_channel(query, channels_dir, depth=depth, timeout=timeout_per_channel)
+            return ch, run_oai_api_channel(query, channels_dir, depth=depth, timeout=timeout)
         if ch in OPTIONAL_API_SPECS:
-            return ch, run_optional_api_channel(ch, query, depth=depth, timeout=timeout_per_channel)
+            return ch, run_optional_api_channel(ch, query, depth=depth, timeout=timeout)
         return ch, {"channel": ch, "status": "unavailable", "error": f"未知通道: {ch}"}
 
     with ThreadPoolExecutor(max_workers=max(1, len(active_channels))) as pool:
@@ -1259,7 +1265,7 @@ def spawn_detached_worker(
     channels: list[str],
     include_oai_api: bool,
     out_report: Path | None,
-    timeout_per_channel: int,
+    timeout_per_channel: int | None = None,
 ) -> int:
     spec = {
         "run_id": run_id,
@@ -1417,7 +1423,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--channels", help="自定义逗号分隔通道（支持 codex,grok,agy,github,hn 及 xai_api,gemini_api,perplexity,tavily,exa,brave）")
         p.add_argument("--include-oai-api", action="store_true", help="显式额外启用 oai-personal 个人 API 通道（默认关闭）")
         p.add_argument("--out", help="指定最终汇总 Markdown 报告写入路径")
-        p.add_argument("--timeout", type=int, default=210, help="单通道最大超时秒数（默认 210）")
+        p.add_argument("--timeout", type=int, help=f"覆盖一阶段通道时限（秒）；Codex 默认 fast {CODEX_TIMEOUT_BY_DEPTH['fast']}、deep {CODEX_TIMEOUT_BY_DEPTH['deep']}")
         p.add_argument("--wait", type=int, default=360, help="前台等待秒数；设为 0 则立即后台运行并返回 run_id（默认 360）")
         p.add_argument("--detach", action="store_true", help="立即后台运行并输出 run_id，用 status 查询")
         p.add_argument("--print-report", action="store_true", help="完成后直接把最终报告全文打印到 stdout")
@@ -1468,7 +1474,7 @@ def main() -> int:
                 channels=spec["channels"],
                 include_oai_api=bool(spec.get("include_oai_api")),
                 out_report=Path(spec["out_report"]) if spec.get("out_report") else None,
-                timeout_per_channel=int(spec.get("timeout_per_channel") or 210),
+                timeout_per_channel=spec.get("timeout_per_channel"),
             )
             return 0
         except Exception as exc:

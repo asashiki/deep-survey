@@ -174,7 +174,6 @@ def handle_tool_call(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             channels=channels,
             include_oai_api=False,
             out_report=None,
-            timeout_per_channel=210,
         )
         state = wait_for_run(run_dir, wait_sec)
         return _format_state_for_mcp(state)

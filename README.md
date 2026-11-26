@@ -43,6 +43,9 @@ deep-survey doctor
 
 ## CLI 用法
 
+Codex 首轮检索默认最多运行 10 分钟（`fast`）或 20 分钟（`deep`）。可用 `--timeout 秒数` 覆盖本次一阶段检索的时限。
+前台等待由 `--wait` 控制，等待结束后可用 `deep-survey status` 查询同一任务。
+
 ```bash
 # 1. 五路并发调研 + 仓库真实性核验 + 交叉汇总（日常首选）
 deep-survey fast "调研主题、背景与重点关注维度" --out outputs/survey.md
